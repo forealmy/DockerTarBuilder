@@ -1,45 +1,56 @@
-name: Push Images to Fixed ACR Address
+name: Sync Docker Images to ACR
 
 on:
   workflow_dispatch:
     inputs:
       docker_images:
-        description: 'Docker 镜像列表（英文逗号分隔）'
+        description: 'Docker images to sync (comma-separated, e.g. nginx:latest,langgenius/dify-api:1.11.2)'
         required: true
-        default: 'nginx:latest,langgenius/dify-api:1.11.2'
+        type: string
 
 jobs:
-  push-to-acr:
+  sync-to-acr:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Push to ACR (Skip on Pull Failure)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Sync images to ACR (Skip on pull failure)
         env:
+          # ⚠️ 替换为你自己的 ACR 公网地址（格式：{实例ID}.{region}.personal.cr.aliyuncs.com/{命名空间}）
           ACR_TARGET_REGISTRY: crpi-dsuujqmghq4pfebi.cn-hangzhou.personal.cr.aliyuncs.com/my-dify-prod
           ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
           ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
         run: |
+          set -euo pipefail
+
           ACR_REGISTRY_HOST=$(echo "$ACR_TARGET_REGISTRY" | cut -d'/' -f1)
-      
-          if [ -z "$ALIYUN_ACCESS_KEY_ID" ] || [ -z "$ALIYUN_ACCESS_KEY_SECRET" ]; then
-            echo "❌ Missing AccessKey."
+
+          if [ -z "${ALIYUN_ACCESS_KEY_ID:-}" ] || [ -z "${ALIYUN_ACCESS_KEY_SECRET:-}" ]; then
+            echo "❌ Missing ALIYUN_ACCESS_KEY_ID or ALIYUN_ACCESS_KEY_SECRET in secrets."
             exit 1
           fi
-      
+
+          echo "🔐 Logging into ACR..."
           echo "$ALIYUN_ACCESS_KEY_SECRET" | docker login \
             --username "$ALIYUN_ACCESS_KEY_ID" \
             --password-stdin \
             "$ACR_REGISTRY_HOST"
-      
+
+          echo "📥 Input images: ${{ github.event.inputs.docker_images }}"
           IFS=',' read -r -a IMAGES <<< "${{ github.event.inputs.docker_images }}"
+
           for IMAGE in "${IMAGES[@]}"; do
+            # Trim whitespace
             IMAGE=$(echo "$IMAGE" | xargs)
             [ -z "$IMAGE" ] && continue
-      
+
             echo ">>> Processing: $IMAGE"
-      
+
+            # Parse repo and tag
             if [[ "$IMAGE" == *":"* ]]; then
               REPO_PART="${IMAGE%:*}"
               TAG_PART="${IMAGE##*:}"
@@ -47,30 +58,41 @@ jobs:
               REPO_PART="$IMAGE"
               TAG_PART="latest"
             fi
-      
+
+            # ✅ SAFE CONVERSION: / → __, preserve -, _, .
             CLEAN_REPO=$(echo "$REPO_PART" | sed 's/\//__/g')
+            # IMPORTANT: '-' at the END to avoid tr range interpretation
             CLEAN_REPO=$(echo "$CLEAN_REPO" | tr -cd 'a-zA-Z0-9._-')
+            # Merge excessive underscores (but keep __ as separator)
             CLEAN_REPO=$(echo "$CLEAN_REPO" | sed 's/___*/__/g')
-            CLEAN_REPO=$(echo "$CLEAN_REPO" | sed 's/^__*/' | sed 's/__*$//')
-            [ -z "$CLEAN_REPO" ] && CLEAN_REPO="unknown"
-      
+            # Remove leading/trailing - or _
+            CLEAN_REPO=$(echo "$CLEAN_REPO" | sed 's/^[-_]*//' | sed 's/[-_]*$//')
+            # Fallback only if truly empty
+            if [ -z "$CLEAN_REPO" ]; then
+              CLEAN_REPO="unknown"
+              echo "⚠️  Warning: Repo name became empty, using 'unknown'"
+            fi
+
             TARGET_IMAGE="$ACR_TARGET_REGISTRY/$CLEAN_REPO:$TAG_PART"
-            echo "Tagging as: $TARGET_IMAGE"
-      
-            # ✅ 跳过拉取失败的镜像
+            echo "📦 Tagging as: $TARGET_IMAGE"
+
+            # ✅ Skip if pull fails (private/missing image)
             if ! docker pull "$IMAGE" --platform linux/amd64; then
-              echo "⚠️  Warning: Skipping '$IMAGE' due to pull failure."
+              echo "⚠️  Skipping '$IMAGE': pull failed (private or not found)"
               echo "----------------------------------------"
               continue
             fi
-      
+
             docker tag "$IMAGE" "$TARGET_IMAGE"
             docker push "$TARGET_IMAGE"
+
+            # Clean up local images to save space
             docker rmi "$IMAGE" "$TARGET_IMAGE" 2>/dev/null || true
             docker image prune -f
-      
-            echo "<<< Success: $IMAGE → $TARGET_IMAGE"
+
+            echo "✅ Success: $IMAGE → $TARGET_IMAGE"
             echo "----------------------------------------"
           done
-      
+
           docker logout "$ACR_REGISTRY_HOST"
+          echo "🎉 Sync completed!"
