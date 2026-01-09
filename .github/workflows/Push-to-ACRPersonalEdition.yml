@@ -11,12 +11,12 @@ on:
 jobs:
   push-to-acr:
     runs-on: ubuntu-22.04
-    environment: acr-prod  # ← 关键！必须和你的 Environment 名一致
+    environment: acr-prod  # ← 确保这个 Environment 名称与你的设置一致
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      
-      - name: Push to ACR (Skip on Pull Failure)
+
+      - name: Login to ACR
         env:
           ACR_TARGET_REGISTRY: crpi-dsuujqmghq4pfebi.cn-hangzhou.personal.cr.aliyuncs.com/my-dify-prod
           ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
@@ -34,6 +34,12 @@ jobs:
             --password-stdin \
             "$ACR_REGISTRY_HOST"
       
+      - name: Push to ACR (Skip on Pull Failure)
+        env:
+          ACR_TARGET_REGISTRY: crpi-dsuujqmghq4pfebi.cn-hangzhou.personal.cr.aliyuncs.com/my-dify-prod
+        run: |
+          set -euo pipefail
+
           IFS=',' read -r -a IMAGES <<< "${{ github.event.inputs.docker_images }}"
           for IMAGE in "${IMAGES[@]}"; do
             IMAGE=$(echo "$IMAGE" | xargs)
