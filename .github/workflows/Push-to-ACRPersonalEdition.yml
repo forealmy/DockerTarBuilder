@@ -56,7 +56,6 @@ jobs:
           
             # ✅ 安全转换：/ → __，保留 - 和 _
             CLEAN_REPO=$(echo "$REPO_PART" | sed 's/\//_0_/g')
-			#CLEAN_REPO=$(echo "$REPO_PART" | sed 's/\//__/g') # 原先是 / → __
             CLEAN_REPO=$(echo "$CLEAN_REPO" | tr -cd 'a-zA-Z0-9._-')  # - at end!
             CLEAN_REPO=$(echo "$CLEAN_REPO" | sed 's/___*/__/g')
             CLEAN_REPO=$(echo "$CLEAN_REPO" | sed 's/^[-_]*//' | sed 's/[-_]*$//')
