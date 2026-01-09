@@ -29,7 +29,7 @@ jobs:
           # 登录 ACR（阿里云支持用 AK/SK 作为用户名密码）
           echo "$ALIYUN_ACCESS_KEY_SECRET" | docker login \
             --username "$ALIYUN_ACCESS_KEY_ID" \
-            $ACR_TARGET_REGISTRY"
+            "$ACR_TARGET_REGISTRY"
 
           IFS=',' read -r -a IMAGES <<< "${{ github.event.inputs.docker_images }}"
 
