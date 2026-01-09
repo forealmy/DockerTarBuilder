@@ -55,16 +55,14 @@ jobs:
               TAG_PART="latest"
             fi
           
-            # 输入: REPO_PART (e.g., "langgenius/dify-api")
-            # 输出: CLEAN_REPO (e.g., "langgenius_0_dify-api")
-            CLEAN_REPO=$(echo "$REPO_PART" | tr '[:upper:]' '[:lower:]')      # 转小写
-            CLEAN_REPO=$(echo "$CLEAN_REPO" | sed 's/\//_0_/g')               # / → _0_
-            CLEAN_REPO=$(echo "$CLEAN_REPO" | tr -cd 'a-z0-9._-')             # 只保留合法字符
-            CLEAN_REPO=$(echo "$CLEAN_REPO" | sed 's/__*/_0_/g')              # 防御性：其他连续 _ 也转（可选）
-            CLEAN_REPO=$(echo "$CLEAN_REPO" | sed 's/--*/-/g')                # 合并多个 -
-            CLEAN_REPO=$(echo "$CLEAN_REPO" | sed 's/\.\.*/./g')              # 合并多个 .
-            CLEAN_REPO=$(echo "$CLEAN_REPO" | sed 's/^[-._]*//' | sed 's/[-._]*$//')  # 去首尾非法字符
-            [ -z "$CLEAN_REPO" ] && CLEAN_REPO="unknown"
+            # 转换规则：/ → __ （与推送时一致）
+          # STORED_REPO=$(echo "$ORIG_REPO" | sed 's/\//__/g')
+            STORED_REPO=$(echo "$ORIG_REPO" | sed 's/\//_0_/g')
+            STORED_REPO=$(echo "$STORED_REPO" | tr -cd 'a-zA-Z0-9._-')
+            STORED_REPO=$(echo "$STORED_REPO" | sed 's/___*/__/g')
+            # 移除任何前导和尾随的 - 或 _
+            STORED_REPO=$(echo "$STORED_REPO" | sed 's/^[-_]*//' | sed 's/[-_]*$//')
+            [ -z "$STORED_REPO" ] && STORED_REPO="unknown"
           
             TARGET_IMAGE="$ACR_TARGET_REGISTRY/$CLEAN_REPO:$TAG_PART"
             echo "Tagging as: $TARGET_IMAGE"
