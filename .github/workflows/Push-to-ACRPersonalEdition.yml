@@ -18,7 +18,7 @@ jobs:
       - name: Push to ACR (Hardcoded Registry)
         env:
           # 👇 直接写死你的 ACR 地址（registry + namespace）
-          ACR_TARGET_REGISTRY: registry.cn-hangzhou.aliyuncs.com/my-dify-prod
+          ACR_TARGET_REGISTRY: crpi-dsuujqmghq4pfebi.cn-hangzhou.personal.cr.aliyuncs.com/my-dify-prod
 
           # 👇 从 Secrets 读取 AccessKey（仅用于登录）
           ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
@@ -29,7 +29,7 @@ jobs:
           # 登录 ACR（阿里云支持用 AK/SK 作为用户名密码）
           echo "$ALIYUN_ACCESS_KEY_SECRET" | docker login \
             --username "$ALIYUN_ACCESS_KEY_ID" \
-            --password-stdin "$(echo $ACR_TARGET_REGISTRY | cut -d'/' -f1)"
+            $ACR_TARGET_REGISTRY"
 
           IFS=',' read -r -a IMAGES <<< "${{ github.event.inputs.docker_images }}"
 
