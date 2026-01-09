@@ -11,7 +11,7 @@ on:
 jobs:
   push-to-acr:
     runs-on: ubuntu-22.04
-    environment: acr-prod  # ← 确保这个 Environment 名称与你的设置一致
+    environment: acr-prod  # ← 关键！必须和你的 Environment 名一致
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -38,8 +38,7 @@ jobs:
         env:
           ACR_TARGET_REGISTRY: crpi-dsuujqmghq4pfebi.cn-hangzhou.personal.cr.aliyuncs.com/my-dify-prod
         run: |
-          set -euo pipefail
-
+      
           IFS=',' read -r -a IMAGES <<< "${{ github.event.inputs.docker_images }}"
           for IMAGE in "${IMAGES[@]}"; do
             IMAGE=$(echo "$IMAGE" | xargs)
@@ -55,14 +54,13 @@ jobs:
               TAG_PART="latest"
             fi
           
-            # 转换规则：/ → __ （与推送时一致）
-          # STORED_REPO=$(echo "$ORIG_REPO" | sed 's/\//__/g')
-            STORED_REPO=$(echo "$ORIG_REPO" | sed 's/\//_0_/g')
-            STORED_REPO=$(echo "$STORED_REPO" | tr -cd 'a-zA-Z0-9._-')
-            STORED_REPO=$(echo "$STORED_REPO" | sed 's/___*/__/g')
-            # 移除任何前导和尾随的 - 或 _
-            STORED_REPO=$(echo "$STORED_REPO" | sed 's/^[-_]*//' | sed 's/[-_]*$//')
-            [ -z "$STORED_REPO" ] && STORED_REPO="unknown"
+            # ✅ 安全转换：/ → __，保留 - 和 _
+            CLEAN_REPO=$(echo "$REPO_PART" | sed 's/\//_0_/g')
+			#CLEAN_REPO=$(echo "$REPO_PART" | sed 's/\//__/g') # 原先是 / → __
+            CLEAN_REPO=$(echo "$CLEAN_REPO" | tr -cd 'a-zA-Z0-9._-')  # - at end!
+            CLEAN_REPO=$(echo "$CLEAN_REPO" | sed 's/___*/__/g')
+            CLEAN_REPO=$(echo "$CLEAN_REPO" | sed 's/^[-_]*//' | sed 's/[-_]*$//')
+            [ -z "$CLEAN_REPO" ] && CLEAN_REPO="unknown"
           
             TARGET_IMAGE="$ACR_TARGET_REGISTRY/$CLEAN_REPO:$TAG_PART"
             echo "Tagging as: $TARGET_IMAGE"
