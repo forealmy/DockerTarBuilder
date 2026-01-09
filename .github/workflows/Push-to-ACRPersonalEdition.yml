@@ -1,4 +1,4 @@
-name: Push to ACR Personal Edition (Preserve Tag)
+name: Push Images to Fixed ACR Address
 
 on:
   workflow_dispatch:
@@ -9,32 +9,35 @@ on:
         default: 'nginx:latest,langgenius/dify-api:1.11.2'
 
 jobs:
-  push-to-acr-personal:
+  push-to-acr:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Push images to Alibaba Cloud ACR (Personal Edition)
+      - name: Push to ACR (Hardcoded Registry)
         env:
-          ACR_REGION: ${{ secrets.ALIYUN_ACR_REGION }}
-          ACR_NAMESPACE: ${{ secrets.ALIYUN_ACR_NAMESPACE }}
-          ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
-          ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
-        run: |
-          ACR_REGISTRY="registry.${ACR_REGION}.aliyuncs.com"
-          echo "Logging into ACR: $ACR_REGISTRY"
+          # 👇 直接写死你的 ACR 地址（registry + namespace）
+          ACR_TARGET_REGISTRY: registry.cn-hangzhou.aliyuncs.com/my-dify-prod
 
-          # 登录 ACR
-          echo "$ACCESS_KEY_SECRET" | docker login --username "$ACCESS_KEY_ID" --password-stdin "$ACR_REGISTRY"
+          # 👇 从 Secrets 读取 AccessKey（仅用于登录）
+          ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
+          ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
+        run: |
+          echo "Target ACR: $ACR_TARGET_REGISTRY"
+
+          # 登录 ACR（阿里云支持用 AK/SK 作为用户名密码）
+          echo "$ALIYUN_ACCESS_KEY_SECRET" | docker login \
+            --username "$ALIYUN_ACCESS_KEY_ID" \
+            --password-stdin "$(echo $ACR_TARGET_REGISTRY | cut -d'/' -f1)"
 
           IFS=',' read -r -a IMAGES <<< "${{ github.event.inputs.docker_images }}"
 
           for IMAGE in "${IMAGES[@]}"; do
-            IMAGE=$(echo "$IMAGE" | xargs)  # 去除空格
+            IMAGE=$(echo "$IMAGE" | xargs)  # trim
             echo ">>> Processing: $IMAGE"
 
-            # === 解析 tag ===
+            # 解析 tag
             if [[ "$IMAGE" == *":"* ]]; then
               REPO_PART="${IMAGE%:*}"
               TAG_PART="${IMAGE##*:}"
@@ -43,18 +46,14 @@ jobs:
               TAG_PART="latest"
             fi
 
-            # === 扁平化 repo 名：替换 / 和 . 为 -，并清理非法字符 ===
-            FLAT_REPO=$(echo "$REPO_PART" | sed 's/[\/.]/-/g' | sed 's/[^a-zA-Z0-9.-]/-/g' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
+            # 扁平化 repo 名（替换 / 和 . 为 -，清理非法字符）
+            FLAT_REPO=$(echo "$REPO_PART" | sed 's/[\/.]/-/g' | tr -cd 'a-zA-Z0-9.-_' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
+            [ -z "$FLAT_REPO" ] && FLAT_REPO="unknown"
 
-            # 确保不为空
-            if [ -z "$FLAT_REPO" ]; then
-              FLAT_REPO="unknown-image"
-            fi
-
-            TARGET_IMAGE="$ACR_REGISTRY/$ACR_NAMESPACE/$FLAT_REPO:$TAG_PART"
+            TARGET_IMAGE="$ACR_TARGET_REGISTRY/$FLAT_REPO:$TAG_PART"
             echo "Tagging as: $TARGET_IMAGE"
 
-            # 拉取、打标、推送、清理
+            # 拉取 → 打标 → 推送 → 清理
             docker pull "$IMAGE" --platform linux/amd64
             docker tag "$IMAGE" "$TARGET_IMAGE"
             docker push "$TARGET_IMAGE"
@@ -65,4 +64,5 @@ jobs:
             echo "----------------------------------------"
           done
 
-          docker logout "$ACR_REGISTRY"
+          # 登出（可选）
+          docker logout "$(echo $ACR_TARGET_REGISTRY | cut -d'/' -f1)"
