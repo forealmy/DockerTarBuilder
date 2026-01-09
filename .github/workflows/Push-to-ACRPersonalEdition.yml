@@ -26,11 +26,17 @@ jobs:
         run: |
           echo "Target ACR: $ACR_TARGET_REGISTRY"
 
+          # 检查 AK 是否为空（防错）
+          if [ -z "$ALIYUN_ACCESS_KEY_ID" ] || [ -z "$ALIYUN_ACCESS_KEY_SECRET" ]; then
+            echo "❌ Error: AccessKey ID or Secret is missing. Check GitHub Secrets."
+            exit 1
+          fi
+
           # 登录 ACR（阿里云支持用 AK/SK 作为用户名密码）
           echo "$ALIYUN_ACCESS_KEY_SECRET" | docker login \
            --username "$ALIYUN_ACCESS_KEY_ID" \
            --password-stdin \
-           "$ACR_REGISTRY_HOST"
+           "$(echo "$ACR_TARGET_REGISTRY" | cut -d'/' -f1)"
 
           IFS=',' read -r -a IMAGES <<< "${{ github.event.inputs.docker_images }}"
 
