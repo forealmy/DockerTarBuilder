@@ -15,36 +15,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Push to ACR (Hardcoded Registry)
+      - name: Push to ACR (Preserve Namespace Unambiguously)
         env:
-          # 👇 直接写死你的 ACR 地址（registry + namespace）
           ACR_TARGET_REGISTRY: crpi-dsuujqmghq4pfebi.cn-hangzhou.personal.cr.aliyuncs.com/my-dify-prod
-
-          # 👇 从 Secrets 读取 AccessKey（仅用于登录）
           ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
           ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
         run: |
-          echo "Target ACR: $ACR_TARGET_REGISTRY"
-
-          # 检查 AK 是否为空（防错）
+          ACR_REGISTRY_HOST=$(echo "$ACR_TARGET_REGISTRY" | cut -d'/' -f1)
+          
           if [ -z "$ALIYUN_ACCESS_KEY_ID" ] || [ -z "$ALIYUN_ACCESS_KEY_SECRET" ]; then
-            echo "❌ Error: AccessKey ID or Secret is missing. Check GitHub Secrets."
+            echo "❌ Missing AccessKey in environment secrets."
             exit 1
           fi
-
-          # 登录 ACR（阿里云支持用 AK/SK 作为用户名密码）
+      
           echo "$ALIYUN_ACCESS_KEY_SECRET" | docker login \
-           --username "$ALIYUN_ACCESS_KEY_ID" \
-           --password-stdin \
-           "$(echo "$ACR_TARGET_REGISTRY" | cut -d'/' -f1)"
-
+            --username "$ALIYUN_ACCESS_KEY_ID" \
+            --password-stdin \
+            "$ACR_REGISTRY_HOST"
+      
           IFS=',' read -r -a IMAGES <<< "${{ github.event.inputs.docker_images }}"
-
           for IMAGE in "${IMAGES[@]}"; do
-            IMAGE=$(echo "$IMAGE" | xargs)  # trim
+            IMAGE=$(echo "$IMAGE" | xargs)
             echo ">>> Processing: $IMAGE"
-
-            # 解析 tag
+      
             if [[ "$IMAGE" == *":"* ]]; then
               REPO_PART="${IMAGE%:*}"
               TAG_PART="${IMAGE##*:}"
@@ -52,24 +45,29 @@ jobs:
               REPO_PART="$IMAGE"
               TAG_PART="latest"
             fi
-
-            # 扁平化 repo 名（替换 / 和 . 为 -，清理非法字符）
-            FLAT_REPO=$(echo "$REPO_PART" | sed 's/[\/.]/-/g' | tr -cd 'a-zA-Z0-9.-_' | sed 's/--*/-/g' | sed 's/^-//' | sed 's/-$//')
-            [ -z "$FLAT_REPO" ] && FLAT_REPO="unknown"
-
-            TARGET_IMAGE="$ACR_TARGET_REGISTRY/$FLAT_REPO:$TAG_PART"
+      
+            # ✅ 无歧义转换：/ → __
+            CLEAN_REPO=$(echo "$REPO_PART" | sed 's/\//__/g')
+            CLEAN_REPO=$(echo "$CLEAN_REPO" | tr -cd 'a-zA-Z0-9._-')
+            CLEAN_REPO=$(echo "$CLEAN_REPO" | sed 's/___*/__/g')
+            CLEAN_REPO=$(echo "$CLEAN_REPO" | sed 's/^__*/' | sed 's/__*$//')
+            [ -z "$CLEAN_REPO" ] && CLEAN_REPO="unknown"
+      
+            TARGET_IMAGE="$ACR_TARGET_REGISTRY/$CLEAN_REPO:$TAG_PART"
             echo "Tagging as: $TARGET_IMAGE"
-
-            # 拉取 → 打标 → 推送 → 清理
+      
             docker pull "$IMAGE" --platform linux/amd64
             docker tag "$IMAGE" "$TARGET_IMAGE"
             docker push "$TARGET_IMAGE"
             docker rmi "$IMAGE" "$TARGET_IMAGE" 2>/dev/null || true
             docker image prune -f
-
+      
             echo "<<< Success: $IMAGE → $TARGET_IMAGE"
             echo "----------------------------------------"
           done
+      
+          docker logout "$ACR_REGISTRY_HOST"
+                done
 
           # 登出（可选）
           docker logout "$(echo $ACR_TARGET_REGISTRY | cut -d'/' -f1)"
