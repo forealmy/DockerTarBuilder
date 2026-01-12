@@ -12,13 +12,14 @@ jobs:
   push-to-acr:
     runs-on: ubuntu-22.04
     environment: acr-prod  # ← 关键！必须和你的 Environment 名一致
-    steps:
+    env:
+      ACR_TARGET_REGISTRY: crpi-dsuujqmghq4pfebi.cn-hangzhou.personal.cr.aliyuncs.com/my-dify-prod
+    steps: 
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Login to ACR
         env:
-          ACR_TARGET_REGISTRY: crpi-dsuujqmghq4pfebi.cn-hangzhou.personal.cr.aliyuncs.com/my-dify-prod
           ALIYUN_ACCESS_KEY_ID: ${{ secrets.ALIYUN_ACCESS_KEY_ID }}
           ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
         run: |
@@ -35,8 +36,6 @@ jobs:
             "$ACR_REGISTRY_HOST"
       
       - name: Push to ACR (Skip on Pull Failure)
-        env:
-          ACR_TARGET_REGISTRY: crpi-dsuujqmghq4pfebi.cn-hangzhou.personal.cr.aliyuncs.com/my-dify-prod
         run: |
       
           IFS=',' read -r -a IMAGES <<< "${{ github.event.inputs.docker_images }}"
@@ -78,3 +77,33 @@ jobs:
           done
 
           docker logout "$ACR_REGISTRY_HOST"
+          
+      - name: Output Ready-to-Run Pull & Retag Commands
+        run: |
+          echo "✅ Copy and run the following commands on your local machine to restore original image tags:"
+          echo ""
+          IFS=',' read -r -a IMAGES <<< "${{ github.event.inputs.docker_images }}"
+          for IMAGE in "${IMAGES[@]}"; do
+            IMAGE=$(echo "$IMAGE" | xargs)
+            [ -z "$IMAGE" ] && continue
+
+            if [[ "$IMAGE" == *":"* ]]; then
+              REPO_PART="${IMAGE%:*}"
+              TAG_PART="${IMAGE##*:}"
+            else
+              REPO_PART="$IMAGE"
+              TAG_PART="latest"
+            fi
+
+            CLEAN_REPO=$(echo "$REPO_PART" | sed 's/\//_0_/g')
+            CLEAN_REPO=$(echo "$CLEAN_REPO" | tr -cd 'a-zA-Z0-9._-')
+            CLEAN_REPO=$(echo "$CLEAN_REPO" | sed 's/___*/__/g')
+            CLEAN_REPO=$(echo "$CLEAN_REPO" | sed 's/^[-_]*//' | sed 's/[-_]*$//')
+            [ -z "$CLEAN_REPO" ] && CLEAN_REPO="unknown"
+
+            TARGET_IMAGE="$ACR_TARGET_REGISTRY/$CLEAN_REPO:$TAG_PART"
+            LOCAL_IMAGE="$REPO_PART:$TAG_PART"
+
+            echo "sudo docker pull '$TARGET_IMAGE' && sudo docker tag '$TARGET_IMAGE' '$LOCAL_IMAGE' && sudo docker rmi '$TARGET_IMAGE'"
+          done
+          echo ""
