@@ -44,7 +44,9 @@ def detect_auth_method():
             ["gh", "auth", "status"],
             capture_output=True,
             text=True,
-            timeout=10
+            timeout=10,
+            encoding="utf-8",
+            errors="replace"
         )
         if result.returncode == 0:
             return "gh"
@@ -64,11 +66,11 @@ def prompt_init():
     auth = detect_auth_method()
     print("=" * 60)
     if auth == "gh":
-        print("✓ 检测到 gh CLI 已登录，将使用 gh 方式触发 workflow")
+        print("[OK] 检测到 gh CLI 已登录，将使用 gh 方式触发 workflow")
     elif auth == "api":
-        print("✓ 检测到 GITHUB_TOKEN 环境变量，将使用 API 方式触发 workflow")
+        print("[OK] 检测到 GITHUB_TOKEN 环境变量，将使用 API 方式触发 workflow")
     else:
-        print("✗ 未检测到可用认证方式")
+        print("[X] 未检测到可用认证方式")
         print("")
         print("请选择以下方式之一进行配置：")
         print("")
@@ -99,7 +101,9 @@ def trigger_via_gh(images, github_repo, workflow_file):
              "--repo", github_repo],
             capture_output=True,
             text=True,
-            timeout=60
+            timeout=60,
+            encoding="utf-8",
+            errors="replace"
         )
         if result.returncode != 0:
             stderr = result.stderr.strip()
@@ -360,10 +364,10 @@ def main():
                 github_repo=args.repo,
                 workflow_file=args.workflow
             )
-            print(f"✓ 触发成功，Run ID: {run_id}")
+            print(f"[OK] 触发成功，Run ID: {run_id}")
             print(f"  查看运行: https://github.com/{args.repo}/actions/runs/{run_id}")
         except RuntimeError as e:
-            print(f"✗ 触发失败: {e}")
+            print(f"[X] 触发失败: {e}")
         return
 
     if args.run_id:
