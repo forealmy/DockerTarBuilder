@@ -11,6 +11,7 @@ on:
 jobs:
   push-to-acr:
     runs-on: ubuntu-22.04
+    environment: acr-prod
     env:
       ACR_TARGET_REGISTRY: ${{ vars.ACR_TARGET_REGISTRY }}
     steps: 
