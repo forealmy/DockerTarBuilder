@@ -24,16 +24,21 @@ jobs:
           ALIYUN_ACCESS_KEY_SECRET: ${{ secrets.ALIYUN_ACCESS_KEY_SECRET }}
         run: |
           ACR_REGISTRY_HOST=$(echo "$ACR_TARGET_REGISTRY" | cut -d'/' -f1)
-      
+
           if [ -z "$ALIYUN_ACCESS_KEY_ID" ] || [ -z "$ALIYUN_ACCESS_KEY_SECRET" ]; then
             echo "❌ Missing AccessKey."
             exit 1
           fi
-      
+
           echo "$ALIYUN_ACCESS_KEY_SECRET" | docker login \
             --username "$ALIYUN_ACCESS_KEY_ID" \
             --password-stdin \
             "$ACR_REGISTRY_HOST"
+
+          if [ $? -ne 0 ]; then
+            echo "❌ Login failed."
+            exit 1
+          fi
       
       - name: Push to ACR (Skip on Pull Failure)
         run: |
@@ -76,8 +81,9 @@ jobs:
             echo "<<< Success: $IMAGE → $TARGET_IMAGE"
           done
 
-          docker logout "$ACR_REGISTRY_HOST"
-          
+      - name: Logout from ACR
+        run: docker logout "$ACR_REGISTRY_HOST" || true
+
       - name: Output Ready-to-Run Pull & Retag Commands
         run: |
           echo "✅ Copy and run the following commands on your local machine to restore original image tags:"
