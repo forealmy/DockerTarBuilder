@@ -16,12 +16,171 @@ import argparse
 import json
 import os
 import re
+import subprocess
+import urllib.request
+import urllib.error
 from datetime import datetime, timezone, timedelta
 
 # 默认值（可被命令行参数覆盖）
 DEFAULT_ACR_REGISTRY = "crpi-dsuujqmghq4pfebi.cn-hangzhou.personal.cr.aliyuncs.com/my-dify-prod"
 DEFAULT_GITHUB_REPO = "forealmy/DockerTarBuilder"
 DEFAULT_WORKFLOW_FILE = "Push-to-ACRPersonalEdition.yml"
+
+
+def detect_auth_method():
+    """
+    检测可用的认证方式。
+
+    优先级：
+    1. gh CLI（已登录）
+    2. GITHUB_TOKEN 环境变量
+
+    返回:
+        "gh" | "api" | None
+    """
+    # 优先检查 gh CLI
+    try:
+        result = subprocess.run(
+            ["gh", "auth", "status"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        if result.returncode == 0:
+            return "gh"
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+
+    # 次选 GITHUB_TOKEN 环境变量
+    token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if token:
+        return "api"
+
+    return None
+
+
+def prompt_init():
+    """检测认证环境并输出配置指引"""
+    auth = detect_auth_method()
+    print("=" * 60)
+    if auth == "gh":
+        print("✓ 检测到 gh CLI 已登录，将使用 gh 方式触发 workflow")
+    elif auth == "api":
+        print("✓ 检测到 GITHUB_TOKEN 环境变量，将使用 API 方式触发 workflow")
+    else:
+        print("✗ 未检测到可用认证方式")
+        print("")
+        print("请选择以下方式之一进行配置：")
+        print("")
+        print("方式一：使用 gh CLI（推荐）")
+        print("  1. 安装 GitHub CLI: https://cli.github.com/")
+        print("  2. 运行 'gh auth login' 完成登录")
+        print("")
+        print("方式二：使用 GitHub Token（无需安装软件）")
+        print("  1. 创建 Personal Access Token:")
+        print("     GitHub → Settings → Developer settings →")
+        print("     Personal access tokens → Generate new token (classic)")
+        print("     所需权限: workflow")
+        print("  2. 设置环境变量:")
+        print("     Windows (PowerShell): $env:GITHUB_TOKEN='ghp_xxx'")
+        print("     Windows (CMD): set GITHUB_TOKEN=ghp_xxx")
+        print("     macOS/Linux: export GITHUB_TOKEN='ghp_xxx'")
+        print("=" * 60)
+    print("")
+    return auth
+
+
+def trigger_via_gh(images, github_repo, workflow_file):
+    """通过 gh CLI 触发 workflow"""
+    try:
+        result = subprocess.run(
+            ["gh", "workflow", "run", workflow_file,
+             "-f", f"docker_images={images}",
+             "--repo", github_repo],
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.strip()
+            # gh 在没有 repo 写权限时返回错误
+            raise RuntimeError(stderr or f"gh exited with {result.returncode}")
+
+        # 解析 run ID: https://github.com/owner/repo/actions/runs/12345678
+        for line in result.stdout.splitlines():
+            if "actions/runs/" in line:
+                run_id = line.split("actions/runs/")[-1].strip()
+                return run_id
+        # 如果 stdout 没有 run URL，尝试从 stderr 获取
+        for line in result.stderr.splitlines():
+            if "actions/runs/" in line:
+                run_id = line.split("actions/runs/")[-1].strip()
+                return run_id
+        raise RuntimeError(f"无法解析 run ID，gh output: {result.stdout}")
+    except FileNotFoundError:
+        raise RuntimeError("gh CLI 未安装，请安装或使用 GITHUB_TOKEN 环境变量")
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("gh 命令超时")
+
+
+def trigger_via_api(images, github_repo, workflow_file, token):
+    """通过 GitHub REST API 触发 workflow"""
+    owner, repo = github_repo.split("/", 1)
+    url = f"https://api.github.com/repos/{owner}/{repo}/actions/workflows/{workflow_file}/dispatches"
+
+    payload = json.dumps({
+        "ref": "master",
+        "inputs": {"docker_images": images}
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        url,
+        data=payload,
+        method="POST",
+        headers={
+            "Authorization": f"token {token}",
+            "Accept": "application/vnd.github.v3+json",
+            "Content-Type": "application/json",
+            "X-GitHub-Api-Version": "2022-11-28"
+        }
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            if resp.status not in (200, 201, 204):
+                raise RuntimeError(f"API returned status {resp.status}")
+            # API 触发成功不返回 run_id，需要从 workflow runs 获取
+            # 简单处理：返回 "triggered"
+            return "triggered"
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8")
+        raise RuntimeError(f"API 错误 {e.code}: {body}")
+
+
+def trigger_workflow(images, github_repo=None, workflow_file=None):
+    """
+    触发 GitHub Actions workflow。
+
+    自动选择认证方式：gh CLI > GITHUB_TOKEN > 提示配置
+
+    返回:
+        run_id 或 "triggered"（API 方式无法获取 run_id 时）
+    """
+    github_repo = github_repo or DEFAULT_GITHUB_REPO
+    workflow_file = workflow_file or DEFAULT_WORKFLOW_FILE
+
+    auth = detect_auth_method()
+    if auth is None:
+        prompt_init()
+        raise RuntimeError("未检测到可用认证方式，请先完成配置")
+
+    if auth == "gh":
+        print(f"使用 gh CLI 触发 workflow...")
+        return trigger_via_gh(images, github_repo, workflow_file)
+    else:
+        token = os.environ.get("GITHUB_TOKEN", "")
+        print(f"使用 GITHUB_TOKEN 触发 workflow...")
+        return trigger_via_api(images, github_repo, workflow_file, token)
 
 
 def normalize_image(image):
@@ -160,6 +319,16 @@ def main():
         help="列出最近的运行链接"
     )
     parser.add_argument(
+        "--check-auth",
+        action="store_true",
+        help="检测可用认证方式并输出配置指引"
+    )
+    parser.add_argument(
+        "-x", "--trigger",
+        action="store_true",
+        help="触发 workflow（自动选择认证方式）"
+    )
+    parser.add_argument(
         "--repo",
         default=DEFAULT_GITHUB_REPO,
         help=f"GitHub 仓库（格式: owner/repo），默认: {DEFAULT_GITHUB_REPO}"
@@ -176,6 +345,26 @@ def main():
     )
 
     args = parser.parse_args()
+
+    if args.check_auth:
+        prompt_init()
+        return
+
+    if args.trigger:
+        if not args.images:
+            print("错误: --trigger 需要配合 -i/--images 使用")
+            return
+        try:
+            run_id = trigger_workflow(
+                args.images,
+                github_repo=args.repo,
+                workflow_file=args.workflow
+            )
+            print(f"✓ 触发成功，Run ID: {run_id}")
+            print(f"  查看运行: https://github.com/{args.repo}/actions/runs/{run_id}")
+        except RuntimeError as e:
+            print(f"✗ 触发失败: {e}")
+        return
 
     if args.run_id:
         result = generate_link_from_run_id(args.run_id, github_repo=args.repo)
