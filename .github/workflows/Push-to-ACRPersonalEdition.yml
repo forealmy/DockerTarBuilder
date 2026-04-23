@@ -11,9 +11,8 @@ on:
 jobs:
   push-to-acr:
     runs-on: ubuntu-22.04
-    environment: acr-prod  # ← 关键！必须和你的 Environment 名一致
     env:
-      ACR_TARGET_REGISTRY: ${{ secrets.ACR_TARGET_REGISTRY }}
+      ACR_TARGET_REGISTRY: ${{ vars.ACR_TARGET_REGISTRY }}
     steps: 
       - name: Checkout
         uses: actions/checkout@v4
